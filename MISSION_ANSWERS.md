@@ -156,20 +156,56 @@ Response header có `Server: nginx`, `X-Frame-Options: DENY`, `X-Content-Type-Op
 
 ### Exercise 3.1 / 3.2: Deploy agent Part 6
 
-- Nền tảng: <TODO: Railway / Render>
-- URL: <TODO: https://...>
+- Nền tảng: **Render** (Exercise 3.2). Deploy agent Part 6 (`06-lab-complete/`) bằng Blueprint `06-lab-complete/render.yaml`.
+- URL: **https://production-agent-tqr2.onrender.com**
+- Tài nguyên: web service `production-agent` (Docker) và Key Value `agent-redis` (Redis)
 - Screenshot: `screenshots/dashboard.png`, `screenshots/running.png`, `screenshots/test.png`
 - Chi tiết: xem `DEPLOYMENT.md`
 
-### So sánh `railway.toml` và `render.yaml`
+Kết quả kiểm tra URL public:
 
-<TODO: khác nhau chỗ nào, vì sao>
+```bash
+BASE=https://production-agent-tqr2.onrender.com
+curl -i "$BASE/health"
+curl -i "$BASE/ready"
+curl -i -X POST "$BASE/ask" -H 'Content-Type: application/json' -d '{"question":"Hello"}'
+```
+```
+HTTP/1.1 200 OK
+{"status":"ok","environment":"production"}
+
+HTTP/1.1 200 OK
+{"status":"ready"}
+
+HTTP/1.1 401 Unauthorized
+{"detail":"Missing or invalid API key"}
+```
+
+Có API key:
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/ask" -H 'Content-Type: application/json' \
+  -H "X-API-Key: $AGENT_API_KEY" -d '{"question":"Hello"}'
+```
+```
+200
+```
+
+Script chấm: `python check_production_ready.py --public-url https://production-agent-tqr2.onrender.com` cho kết quả `✅ Public URL: GET https://production-agent-tqr2.onrender.com/health → 200`.
+
+`/ready` trả 200 chứng tỏ agent đã kết nối được Redis trên Render. Nếu `REDIS_URL` sai, endpoint này sẽ trả 503 (tiêu chí 5 của Part 6).
+
 
 ### Exercise 3.3: Pipeline Cloud Run
 
 Đọc `03-cloud-deployment/production-cloud-run/cloudbuild.yaml` và `service.yaml`:
 
-<TODO: 3–5 dòng mô tả các bước của pipeline CI/CD>
+1. **Test:** Cloud Build chạy step `test` trong `python:3.11-slim`: cài `requirements.txt` + `pytest`, chạy `pytest tests/`. Test fail thì pipeline dừng, không build.
+2. **Build:** step `build` (`waitFor: [test]`) build Docker image, gắn 2 tag `gcr.io/$PROJECT_ID/ai-agent:$COMMIT_SHA` và `:latest`, dùng `--cache-from ...:latest` để tận dụng layer cache.
+3. **Push:** step `push` đẩy cả 2 tag lên Container Registry. Tag theo `$COMMIT_SHA` cho phép biết chính xác commit nào đang chạy và rollback được.
+4. **Deploy:** step `deploy` chạy `gcloud run deploy ai-agent` với image theo đúng `$COMMIT_SHA`, region `asia-southeast1`, `--min-instances=1` (tránh cold start), `--max-instances=10` (giới hạn chi phí), 512Mi / 1 CPU, timeout 60 giây. `OPENAI_API_KEY` lấy từ **Secret Manager** (`--set-secrets`), không nằm trong code.
+5. **`service.yaml`** khai báo cùng service đó theo kiểu Knative (declarative): autoscale 1–10 instance, `containerConcurrency: 80`, giới hạn tài nguyên, secret qua `secretKeyRef`, `livenessProbe` gọi `/health` và `startupProbe` gọi `/ready`, đúng mô hình liveness/readiness ở Part 5.
+
+Nhận xét: step `test` chạy `pytest tests/`, nhưng cả repo chưa có thư mục `tests/` nào (`requirements.txt` cũng không nằm trong `production-cloud-run/`). Pipeline này sẽ fail ngay bước đầu nếu chạy nguyên trạng: muốn dùng thật phải thêm test, hoặc trỏ tới thư mục test đúng.
 
 ---
 
